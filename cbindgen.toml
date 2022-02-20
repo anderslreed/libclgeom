@@ -1,0 +1,7 @@
+language = "C"
+cpp_compat = true
+documentation_style = "c"
+include_guard = "_LIBCLGEOM_H"
+
+[parse]
+parse_deps = false

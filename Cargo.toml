@@ -1,10 +1,25 @@
 [package]
-name = "libclgeom"
+name = "clgeom"
 version = "0.1.0"
 edition = "2021"
 authors = ["Anders Lehn Reed <anders.lehn.reed@gmail.com>"]
+categories = ["concurrency", "mathematics"]
+description = "Computational geometry with OpenCL"
+keywords = ["geometry", "gpgpu", "gpu", "opencl", "parallel"]
 license = "AGPL-3.0-or-later"
 repository = "https://gitlab.com/anderslreed/libclgeom"
+
+[profile.dev]
+opt-level = 0
+split-debuginfo = "off"
+
+[profile.release]
+opt-level = 3
+split-debuginfo = "off"
+
+[profile.test]
+opt-level = 0
+split-debuginfo = "off"
 
 [lib]
 crate-type = ["cdylib"]
@@ -12,4 +27,3 @@ test = true
 
 [dependencies]
 ocl = "^0.19"
-
