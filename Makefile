@@ -22,13 +22,12 @@ release: $(RUST_FILES) $(TARGET_PATH)/release/libclgeom.h
 
 target/debug/libclgeom.h: $(FFI_FILES)
 	cbindgen -o $(TARGET_PATH)/debug/libclgeom.h
-	# Remove unnecessary includes
-	sed -i.cbindgen '/#include\s*<.*[^t].h>/d' $(TARGET_PATH)/debug/libclgeom.h
+	# Remove unnecessary includes, and make variables const
+	sed -i.cbindgen '/#include\s*<.*[^t].h>/d; s/uintptr_t/const uintptr_t/' $(TARGET_PATH)/debug/libclgeom.h
 
 target/release/libclgeom.h: $(FFI_FILES)
 	cbindgen -o $(TARGET_PATH)/release/libclgeom.h
-	# Remove unnecessary includes
-	sed -i.cbindgen '/#include\s*<.*[^t].h>/d' $(TARGET_PATH)/release/libclgeom.h
+	sed -i.cbindgen '/#include\s*<.*[^t].h>/d; s/uintptr_t/const uintptr_t/' $(TARGET_PATH)/release/libclgeom.h
 
 test: build $(C_DEPS)
 	$(CC) $(C_SRC_PATH)/test_main.c -o $(C_SRC_PATH)/test_libclgeom -lc -lclgeom -Ltarget/debug

@@ -1,5 +1,6 @@
+#include "test_context.c"
 #include <stdio.h>
 
 int main() {
-    return 0;
+    return test_context();
 }
