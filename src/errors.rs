@@ -14,6 +14,15 @@ pub struct ClgeomError {
     pub cause: Option<Box<dyn Error>>,
 }
 
+impl ClgeomError {
+    pub fn new(message: String) -> Self {
+        Self {
+            message,
+            cause: None,
+        }
+    }
+}
+
 impl Display for ClgeomError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let result = match self.cause.as_ref() {

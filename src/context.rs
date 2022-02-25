@@ -84,26 +84,31 @@ impl ContextManager {
     ///
     /// * `device` - device to create context with.
     ///
-    pub fn create_context(&self, device: &DeviceInfo) -> Result<ComputeContext, String> {
+    pub fn create_context(&self, device: &DeviceInfo) -> Result<ComputeContext, ClgeomError> {
         let mut builder = Context::builder();
         let ocl_platform = match self.ocl_platforms.get(device.platform_id) {
             Some(pfm) => pfm,
-            None => return Err(format!("Error getting platform {}", device.platform_id)),
+            None => {
+                return Err(ClgeomError::new(format!(
+                    "Error getting platform {}",
+                    device.platform_id
+                )))
+            }
         };
         let ocl_device = match ocl_platform.devices.get(device.device_id) {
             Some(dev) => dev,
             None => {
-                return Err(format!(
+                return Err(ClgeomError::new(format!(
                     "Error getting device {} for platform {}",
                     device.device_id, device.platform_id
-                ))
+                )))
             }
         };
         builder.platform(ocl_platform.platform);
         builder.devices(ocl_device);
         let context = match builder.build() {
             Ok(ctx) => ctx,
-            Err(e) => return Err(format!("Failed to create context. {:?}", e)),
+            Err(e) => return Err(ClgeomError::new(format!("Failed to create context. {:?}", e))),
         };
         Ok(ComputeContext { _context: context })
     }
