@@ -4,7 +4,7 @@ use std::iter::Iterator;
 
 use ocl::{flags::DEVICE_TYPE_GPU, Context, Device, Platform};
 
-use crate::errors::{convert_ocl_error, ClgeomError};
+use crate::errors::{rewrap_ocl_result, ClgeomError};
 
 /// Represents an `ocl::Device`. Only valid for the `ContextManager` which created it.
 pub struct DeviceInfo {
@@ -86,40 +86,34 @@ impl ContextManager {
     ///
     pub fn create_context(&self, device: &DeviceInfo) -> Result<ComputeContext, ClgeomError> {
         let mut builder = Context::builder();
-        let ocl_platform = match self.ocl_platforms.get(device.platform_id) {
-            Some(pfm) => pfm,
-            None => {
-                return Err(ClgeomError::new(format!(
-                    "Error getting platform {}",
-                    device.platform_id
-                )))
-            }
-        };
-        let ocl_device = match ocl_platform.devices.get(device.device_id) {
-            Some(dev) => dev,
-            None => {
-                return Err(ClgeomError::new(format!(
-                    "Error getting device {} for platform {}",
-                    device.device_id, device.platform_id
-                )))
-            }
-        };
+        let ocl_platform = self
+            .ocl_platforms
+            .get(device.platform_id)
+            .ok_or_else(|| ClgeomError::new(&format!(
+                "Error getting platform {}",
+                device.platform_id
+            )))?;
+        let ocl_device = ocl_platform
+            .devices
+            .get(device.device_id)
+            .ok_or_else(|| ClgeomError::new(&format!(
+                "getting device {} for platform {}",
+                device.device_id, device.platform_id
+            )))?;
         builder.platform(ocl_platform.platform);
         builder.devices(ocl_device);
-        let context = match builder.build() {
-            Ok(ctx) => ctx,
-            Err(e) => return Err(ClgeomError::new(format!("Failed to create context. {:?}", e))),
-        };
+        let context = rewrap_ocl_result(builder.build(), "creating context")?;
         Ok(ComputeContext { _context: context })
     }
 }
 
 // Get a list of devices for the specified platform
 fn unwrap_devices(platform: Platform) -> Result<PlatformDevices, ClgeomError> {
-    match Device::list(platform, Some(DEVICE_TYPE_GPU)) {
-        Ok(devices) => Ok(PlatformDevices::new(platform, devices)),
-        Err(e) => convert_ocl_error(&e, "reading OpenCL error status while listing devices"),
-    }
+    let devices = rewrap_ocl_result(
+        Device::list(platform, Some(DEVICE_TYPE_GPU)),
+        "listing devices",
+    )?;
+    Ok(PlatformDevices::new(platform, devices))
 }
 
 // Create `DeviceInfo` vector for a platform
@@ -127,10 +121,10 @@ fn create_device_infos(
     platform_id: usize,
     platform_devices: &PlatformDevices,
 ) -> Result<Vec<DeviceInfo>, ClgeomError> {
-    let name = match platform_devices.platform.name() {
-        Ok(val) => val,
-        Err(e) => return convert_ocl_error(&e, "creating DeviceInfo instances"),
-    };
+    let name = rewrap_ocl_result(
+        platform_devices.platform.name(),
+        "creating DeviceInfo instances",
+    )?;
     platform_devices
         .devices
         .iter()
@@ -146,10 +140,7 @@ fn create_device_info(
     device_id: usize,
     device: Device,
 ) -> Result<DeviceInfo, ClgeomError> {
-    let device_name = match device.name() {
-        Ok(txt) => txt,
-        Err(e) => return convert_ocl_error(&e, "getting device name"),
-    };
+    let device_name = rewrap_ocl_result(device.name(), "getting device name")?;
     Ok(DeviceInfo {
         device_id,
         device_name,

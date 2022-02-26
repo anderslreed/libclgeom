@@ -3,7 +3,7 @@
 use ocl::builders::ContextBuilder;
 use ocl::{Device, Program};
 
-use crate::errors::{convert_ocl_error, ClgeomError};
+use crate::errors::{rewrap_ocl_result, ClgeomError};
 
 // Library of source code strings generated from files in src/opencl/
 macro_rules! get_source {
@@ -38,7 +38,7 @@ macro_rules! get_source {
                 T1 = "float4",
                 T2 = "float4"
             )),
-            &_ => Err(ClgeomError::new(format!("Unknown function: {}", $fn_name))),
+            &_ => Err(ClgeomError::new(&format!("Unknown function: {}", $fn_name))),
         }
     }};
 }
@@ -51,18 +51,17 @@ macro_rules! get_source {
 /// * `target` - device which will run the program
 ///
 pub fn get_program(function: &str, target: Device) -> Result<Program, ClgeomError> {
-    let context = match ContextBuilder::new().devices(target).build() {
-        Ok(ctx) => ctx,
-        Err(e) => return convert_ocl_error(&e, "creating context"),
-    };
-    match Program::builder()
-        .source(get_source!(function)?)
-        .devices(target)
-        .build(&context)
-    {
-        Ok(p) => Ok(p),
-        Err(e) => convert_ocl_error(&e, "building OpenCL program"),
-    }
+    let context = rewrap_ocl_result(
+        ContextBuilder::new().devices(target).build(),
+        "creating context",
+    )?;
+    rewrap_ocl_result(
+        Program::builder()
+            .source(get_source!(function)?)
+            .devices(target)
+            .build(&context),
+        "building OpenCL program",
+    )
 }
 
 #[cfg(test)]
