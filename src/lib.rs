@@ -2,13 +2,11 @@
 
 #![warn(
     clippy::cargo,
-    
     clippy::nursery,
     clippy::panic,
     clippy::pedantic,
-    clippy::restriction,
+    clippy::restriction
 )]
-
 #![allow(
     clippy::blanket_clippy_restriction_lints,
     clippy::implicit_return,
@@ -24,6 +22,7 @@
     */
 )]
 
-mod errors;
+mod compile;
 mod context;
+mod errors;
 mod ffi;
