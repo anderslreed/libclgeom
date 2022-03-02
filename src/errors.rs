@@ -1,10 +1,12 @@
 //! Error types
 
-use std::error::Error;
-use std::fmt;
+use std::error::{Error};
+use std::fmt::{Debug, Result as FmtResult};
 use std::fmt::{Display, Formatter};
 
-/// Represents an error arising from `ocl`
+use ocl::Error as OclError;
+use ocl::core::Error as OclCoreError;
+
 #[derive(Debug)]
 pub struct ClgeomError {
     /// Error message
@@ -29,7 +31,7 @@ impl ClgeomError {
 }
 
 impl Display for ClgeomError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let result = match self.cause.as_ref() {
             Some(c) => write!(f, "{}\ncaused by\n{}", self.message, c),
             None => writeln!(f, "{}", self.message),
@@ -42,6 +44,54 @@ impl Display for ClgeomError {
 }
 
 impl Error for ClgeomError {}
+
+// Trait for ocl errors
+pub trait ToClgeomError : Display {
+    fn to_clgeom_error(&self, op: &str) -> ClgeomError;
+}
+
+/// For an `ocl` error, return a corresponding `ClgeomError`
+///
+/// # Arguments
+///
+/// * `op` operation to report if getting the status code returns an error
+///
+macro_rules! error_info_impl {
+    ($t:tt) => {
+        impl ToClgeomError for $t {
+            fn to_clgeom_error(&self, op: &str) -> ClgeomError {
+                let status_str = match &self.api_status() {
+                    Some(s) => format!("{}", s),
+                    None => "[NONE]".to_owned(),
+                };
+                // ocl::Error.cause() returns ocl::error::Fail, which is private, preventing recursion.
+                // Just add the error message from the cause, if any, to the output.
+                let cause_str = match &self.cause() {
+                    Some(c) => format!("Caused by:\n{}", c),
+                    None => "".to_owned(),
+                };
+                let message = format!(
+                    "OpenCL error while {}.\nOpenCL status: {}\nError message: {}\nCaused by: {}\n",
+                    op, status_str, cause_str, &self
+                );
+                ClgeomError {
+                    message,
+                    cause: None,
+                }
+            }
+        }
+    };
+}
+
+error_info_impl!(OclError);
+error_info_impl!(OclCoreError);
+
+pub fn rewrap_ocl_result<T, E: ToClgeomError>(r: Result<T, E>, op: &str) -> Result<T, ClgeomError> {
+    match r {
+        Ok(v) => Ok(v),
+        Err(e) => Err(e.to_clgeom_error(op))
+    }
+}
 
 /// Get a `ClgeomError` corresponding to the provided `std::error::Error`
 ///
@@ -57,42 +107,6 @@ pub fn convert_std_error<T>(e: Box<dyn Error>, op: &str) -> Result<T, ClgeomErro
         message,
         cause: Some(e),
     })
-}
-
-/// If the provided result is an `ocl::error::Error`, return a corresponding `ClgeomError`. Otherwise
-/// reurn the value of the result
-///
-/// # Arguments
-///
-/// * `T` the expected class type for the Result Ok()
-/// * `r` the `ocl::error::Result` to unwrap
-/// * `op` operation to report if getting the status code returns an error
-///
-pub fn rewrap_ocl_result<T>(r: ocl::error::Result<T>, op: &str) -> Result<T, ClgeomError> {
-    match r {
-        Ok(val) => Ok(val),
-        Err(e) => {
-            let status_str = match e.api_status() {
-                Some(s) => format!("{}", s),
-                None => "[NONE]".to_owned(),
-            };
-            // ocl::Error.cause() returns ocl::error::Fail, which is private, preventing recursion.
-            // Just add the error message from the cause, if any, to the output.
-            let cause_str = match e.cause() {
-                Some(c) => format!("Caused by:\n{}", c),
-                None => "".to_owned(),
-            };
-            let message = format!(
-                "OpenCL error while {}.\nOpenCL status: {}\nError message: {}\nCaused by: {}\n",
-                op, status_str, cause_str, e
-            );
-            Err(ClgeomError {
-                message,
-                cause: None,
-            })
-        }    
-    }
-    
 }
 
 #[cfg(test)]

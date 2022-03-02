@@ -2,8 +2,12 @@
 
 use std::iter::Iterator;
 
-use ocl::{flags::DEVICE_TYPE_GPU, Context, Device, Platform};
+use ocl::flags::{MemFlags, DEVICE_TYPE_GPU};
+use ocl::prm::Float4;
+use ocl::traits::OclPrm;
+use ocl::{Buffer, Context, Device, Kernel, Platform, Queue};
 
+use crate::compile::get_program;
 use crate::errors::{rewrap_ocl_result, ClgeomError};
 
 /// Represents an `ocl::Device`. Only valid for the `ContextManager` which created it.
@@ -21,10 +25,94 @@ pub struct DeviceInfo {
     pub platform_name: String,
 }
 
+type BufferResult<T> = Result<Buffer<T>, ClgeomError>;
+
 /// Wraps a `ocl::ComputeContext`.
 pub struct ComputeContext {
     /// The wrapped `ocl::Context`.
-    _context: Context,
+    context: Context,
+}
+
+impl ComputeContext {
+    pub fn create_buffer_from<T: OclPrm>(&self, data: &[T], allow_write: bool) -> BufferResult<T> {
+        let flags = if allow_write {
+            MemFlags::READ_WRITE
+        } else {
+            MemFlags::READ_ONLY
+        };
+        rewrap_ocl_result(
+            Buffer::builder()
+                .context(&self.context)
+                .copy_host_slice(data)
+                .flags(flags)
+                .len(data.len())
+                .build(),
+            "creating buffer",
+        )
+    }
+
+    pub fn create_empty_buffer<T: OclPrm>(&self, size: usize) -> BufferResult<T> {
+        rewrap_ocl_result(
+            Buffer::builder()
+                .context(&self.context)
+                .flags(MemFlags::READ_WRITE)
+                .len(size)
+                .build(),
+            "creating empty buffer",
+        )
+    }
+
+    pub fn execute_kernel(
+        &self,
+        name: &str,
+        data: &Buffer<Float4>,
+        args: Vec<ParamType>,
+        size: usize,
+    ) -> Result<Vec<Float4>, ClgeomError> {
+        let devices = self.context.devices();
+        let device = match devices.get(0) {
+            Some(v) => v,
+            None => return Err(ClgeomError::new("Error getting device")),
+        };
+        let program = get_program(name, &self.context, device)?;
+        let queue = rewrap_ocl_result(
+            Queue::new(&self.context, *device, None),
+            "creating command queue",
+        )?;
+        // Not using KernelBuilder since OclPrm is not object safe and cannot be passed as a parameter
+        // so using ArgVal instead to set function parameters
+        let mut kernel_builder = Kernel::builder();
+        kernel_builder.arg(data);
+        for arg in args {
+            match arg {
+                ParamType::Buffer(content) => {
+                    kernel_builder.arg(content);
+                }
+                ParamType::Value(content) => {
+                    kernel_builder.arg(content);
+                }
+            };
+        }
+        let kernel = rewrap_ocl_result(
+            kernel_builder
+                .global_work_size(size)
+                .name(name)
+                .program(&program)
+                .queue(queue.clone())
+                .build(),
+            &format!("building kernel for function: {}", name),
+        )?;
+        // Safety: user is responsible for supplying appropriate kernel args
+        unsafe { rewrap_ocl_result(kernel.enq(), &format!("running kernel: {}", name))? }
+        let mut result = vec![Float4::new(0.0, 0.0, 0.0, 0.0); data.len()];
+        rewrap_ocl_result(data.read(&mut result).queue(&queue).enq(), "reading result")?;
+        Ok(result)
+    }
+}
+
+pub enum ParamType<'a> {
+    Buffer(&'a Buffer<Float4>),
+    Value(&'a Float4),
 }
 
 /// An `ocl::Platform` and its vector of `ocl::Device`.
@@ -86,24 +174,19 @@ impl ContextManager {
     ///
     pub fn create_context(&self, device: &DeviceInfo) -> Result<ComputeContext, ClgeomError> {
         let mut builder = Context::builder();
-        let ocl_platform = self
-            .ocl_platforms
-            .get(device.platform_id)
-            .ok_or_else(|| ClgeomError::new(&format!(
-                "Error getting platform {}",
-                device.platform_id
-            )))?;
-        let ocl_device = ocl_platform
-            .devices
-            .get(device.device_id)
-            .ok_or_else(|| ClgeomError::new(&format!(
+        let ocl_platform = self.ocl_platforms.get(device.platform_id).ok_or_else(|| {
+            ClgeomError::new(&format!("Error getting platform {}", device.platform_id))
+        })?;
+        let ocl_device = ocl_platform.devices.get(device.device_id).ok_or_else(|| {
+            ClgeomError::new(&format!(
                 "getting device {} for platform {}",
                 device.device_id, device.platform_id
-            )))?;
+            ))
+        })?;
         builder.platform(ocl_platform.platform);
         builder.devices(ocl_device);
         let context = rewrap_ocl_result(builder.build(), "creating context")?;
-        Ok(ComputeContext { _context: context })
+        Ok(ComputeContext { context })
     }
 }
 
@@ -149,17 +232,17 @@ fn create_device_info(
     })
 }
 
-/*
-    TESTS
-*/
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn create_context_manager() -> ContextManager {
+        ContextManager::new().expect("Error creating ContextManager")
+    }
+
     #[test]
     fn get_context_manager() {
-        let mgr = ContextManager::new().expect("Error creating ContextManager");
+        let mgr = create_context_manager();
         let devices = mgr.list_devices().expect("Error listing devices");
         assert!(!devices.is_empty());
 
@@ -171,5 +254,42 @@ mod tests {
                 .expect("Error getting defailt device")
                 .device_name
         );
+    }
+
+    #[test]
+    fn translate() {
+        let mgr = create_context_manager();
+        let device_info = &mgr.list_devices().expect("Error listing devices")[0];
+        let cxt = mgr.create_context(&device_info).unwrap();
+
+        let data_a: &[Float4; 2] = &[
+            Float4::new(1.0, 2.0, 3.0, 0.0),
+            Float4::new(4.1, 5.2, 6.3, 0.0),
+        ];
+        let data_b = Float4::new(0.1, 0.2, 0.3, 0.0);
+        let expected: &[Float4; 2] = &[
+            Float4::new(1.1, 2.2, 3.3, 0.0),
+            Float4::new(4.2, 5.4, 6.6, 0.0),
+        ];
+
+        let buffer_a: Buffer<Float4> = cxt.create_buffer_from(data_a, true).unwrap();
+        let result = cxt
+            .execute_kernel(
+                "translate",
+                &buffer_a,
+                vec![ParamType::Value(&data_b)],
+                data_a.len(),
+            )
+            .unwrap();
+
+        for i in 0..data_a.len() {
+            for j in 0..3 {
+                let exp = expected[i].get(j).unwrap();
+                let dat = result[i].get(j).unwrap();
+                println!("{},{}: {}", i, j, exp);
+                println!("{},{}: {}", i, j, dat);
+                assert!((exp - dat).abs() < 0.000001);
+            }
+        }
     }
 }

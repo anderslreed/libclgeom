@@ -1,7 +1,6 @@
 //! Build `OpenCL` programs from source
 
-use ocl::builders::ContextBuilder;
-use ocl::{Device, Program};
+use ocl::{Context, Device, Program};
 
 use crate::errors::{rewrap_ocl_result, ClgeomError};
 
@@ -10,31 +9,17 @@ macro_rules! get_source {
     ($fn_name:ident) => {{
         use crate::errors::ClgeomError;
         match $fn_name {
-            "add" => Ok(format!(
-                include_str!("opencl/fn_inpl.c"),
-                name = "add",
+            "translate" => Ok(format!(
+                include_str!("opencl/fn_inpl_scalar.c"),
+                name = "translate",
                 op = "+=",
                 T1 = "float4",
                 T2 = "float4"
             )),
-            "sub" => Ok(format!(
-                include_str!("opencl/fn_inpl.c"),
-                name = "sub",
-                op = "-=",
-                T1 = "float4",
-                T2 = "float4"
-            )),
-            "mul" => Ok(format!(
-                include_str!("opencl/fn_inpl.c"),
-                name = "mul",
+            "scale" => Ok(format!(
+                include_str!("opencl/fn_inpl_scalar.c"),
+                name = "scale",
                 op = "*=",
-                T1 = "float4",
-                T2 = "float4"
-            )),
-            "div" => Ok(format!(
-                include_str!("opencl/fn_inpl.c"),
-                name = "div",
-                op = "/=",
                 T1 = "float4",
                 T2 = "float4"
             )),
@@ -50,16 +35,12 @@ macro_rules! get_source {
 /// * `function` - name of function to retrieve program for
 /// * `target` - device which will run the program
 ///
-pub fn get_program(function: &str, target: Device) -> Result<Program, ClgeomError> {
-    let context = rewrap_ocl_result(
-        ContextBuilder::new().devices(target).build(),
-        "creating context",
-    )?;
+pub fn get_program(function: &str, context: &Context, target: &Device) -> Result<Program, ClgeomError> {
     rewrap_ocl_result(
         Program::builder()
             .source(get_source!(function)?)
             .devices(target)
-            .build(&context),
+            .build(context),
         "building OpenCL program",
     )
 }
@@ -68,12 +49,12 @@ pub fn get_program(function: &str, target: Device) -> Result<Program, ClgeomErro
 mod tests {
 
     #[test]
-    fn get_add() {
-        let name = "add";
+    fn get_translate() {
+        let name = "translate";
         let expected = concat!(
-            "__kernel void add(__global float4 *A, __global const float4 *B) {\n",
+            "__kernel void translate(__global float4 *A, const float4 B) {\n",
             "    int i = get_global_id(0);\n",
-            "    A[i] += B[i];\n",
+            "    A[i] += B;\n",
             "}"
         );
         assert_eq!(get_source!(name).unwrap(), expected);
