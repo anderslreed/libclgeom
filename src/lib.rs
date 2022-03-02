@@ -26,3 +26,4 @@ mod compile;
 mod context;
 mod errors;
 mod ffi;
+mod mesh;

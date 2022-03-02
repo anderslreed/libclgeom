@@ -69,15 +69,13 @@ impl ComputeContext {
         data: &Buffer<Float4>,
         args: Vec<ParamType>,
         size: usize,
-    ) -> Result<Vec<Float4>, ClgeomError> {
+    ) -> Result<(), ClgeomError> {
         let devices = self.context.devices();
         let device = match devices.get(0) {
             Some(v) => v,
             None => return Err(ClgeomError::new("Error getting device")),
         };
         let program = get_program(name, &self.context, device)?;
-        // Not using KernelBuilder since OclPrm is not object safe and cannot be passed as a parameter
-        // so using ArgVal instead to set function parameters
         let mut kernel_builder = Kernel::builder();
         kernel_builder.arg(data);
         for arg in args {
@@ -100,9 +98,12 @@ impl ComputeContext {
             &format!("building kernel for function: {}", name),
         )?;
         // Safety: user is responsible for supplying appropriate kernel args
-        unsafe { rewrap_ocl_result(kernel.enq(), &format!("running kernel: {}", name))? }
-        let mut result = vec![Float4::new(0.0, 0.0, 0.0, 0.0); data.len()];
-        rewrap_ocl_result(data.read(&mut result).queue(&self.queue).enq(), "reading result")?;
+        unsafe { rewrap_ocl_result(kernel.enq(), &format!("running kernel: {}", name)) }
+    }
+
+    pub fn read_buffer(&self, buffer: &Buffer<Float4>) -> Result<Vec<Float4>, ClgeomError>{
+        let mut result = vec![Float4::new(0.0, 0.0, 0.0, 0.0); buffer.len()];
+        rewrap_ocl_result(buffer.read(&mut result).queue(&self.queue).enq(), "reading result")?;
         Ok(result)
     }
 }
@@ -274,7 +275,7 @@ mod tests {
         ];
 
         let buffer_a: Buffer<Float4> = cxt.create_buffer_from(data_a, true).unwrap();
-        let result = cxt
+        cxt
             .execute_kernel(
                 "translate",
                 &buffer_a,
@@ -282,6 +283,8 @@ mod tests {
                 data_a.len(),
             )
             .unwrap();
+
+        let result = cxt.read_buffer(buffer_a).unwrap();
 
         for i in 0..data_a.len() {
             for j in 0..3 {
