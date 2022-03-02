@@ -31,6 +31,7 @@ type BufferResult<T> = Result<Buffer<T>, ClgeomError>;
 pub struct ComputeContext {
     /// The wrapped `ocl::Context`.
     context: Context,
+    queue: Queue,
 }
 
 impl ComputeContext {
@@ -75,10 +76,6 @@ impl ComputeContext {
             None => return Err(ClgeomError::new("Error getting device")),
         };
         let program = get_program(name, &self.context, device)?;
-        let queue = rewrap_ocl_result(
-            Queue::new(&self.context, *device, None),
-            "creating command queue",
-        )?;
         // Not using KernelBuilder since OclPrm is not object safe and cannot be passed as a parameter
         // so using ArgVal instead to set function parameters
         let mut kernel_builder = Kernel::builder();
@@ -98,14 +95,14 @@ impl ComputeContext {
                 .global_work_size(size)
                 .name(name)
                 .program(&program)
-                .queue(queue.clone())
+                .queue(self.queue.clone())
                 .build(),
             &format!("building kernel for function: {}", name),
         )?;
         // Safety: user is responsible for supplying appropriate kernel args
         unsafe { rewrap_ocl_result(kernel.enq(), &format!("running kernel: {}", name))? }
         let mut result = vec![Float4::new(0.0, 0.0, 0.0, 0.0); data.len()];
-        rewrap_ocl_result(data.read(&mut result).queue(&queue).enq(), "reading result")?;
+        rewrap_ocl_result(data.read(&mut result).queue(&self.queue).enq(), "reading result")?;
         Ok(result)
     }
 }
@@ -186,7 +183,11 @@ impl ContextManager {
         builder.platform(ocl_platform.platform);
         builder.devices(ocl_device);
         let context = rewrap_ocl_result(builder.build(), "creating context")?;
-        Ok(ComputeContext { context })
+        let queue = rewrap_ocl_result(
+            Queue::new(&context, *ocl_device, None),
+            "creating command queue",
+        )?;
+        Ok(ComputeContext { context, queue })
     }
 }
 
