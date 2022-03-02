@@ -12,8 +12,8 @@ use crate::errors::{rewrap_ocl_result, ClgeomError};
 
 /// Represents an `ocl::Device`. Only valid for the `ContextManager` which created it.
 pub struct DeviceInfo {
-    /// Unique identifier among devices on a platform.
-    pub device_id: usize,
+    /// OpenCL device
+    pub device: Device,
 
     /// The name of the device.
     pub device_name: String,
@@ -210,17 +210,11 @@ impl ContextManager {
         let ocl_platform = self.ocl_platforms.get(device.platform_id).ok_or_else(|| {
             ClgeomError::new(&format!("Error getting platform {}", device.platform_id))
         })?;
-        let ocl_device = ocl_platform.devices.get(device.device_id).ok_or_else(|| {
-            ClgeomError::new(&format!(
-                "getting device {} for platform {}",
-                device.device_id, device.platform_id
-            ))
-        })?;
         builder.platform(ocl_platform.platform);
-        builder.devices(ocl_device);
+        builder.devices(device.device);
         let context = rewrap_ocl_result(builder.build(), "creating context")?;
         let queue = rewrap_ocl_result(
-            Queue::new(&context, *ocl_device, None),
+            Queue::new(&context, device.device, None),
             "creating command queue",
         )?;
         Ok(ComputeContext { context, queue })
@@ -248,8 +242,7 @@ fn create_device_infos(
     platform_devices
         .devices
         .iter()
-        .enumerate()
-        .map(|d| create_device_info(platform_id, name.clone(), d.0, *d.1))
+        .map(|d| create_device_info(platform_id, name.clone(), *d))
         .collect()
 }
 
@@ -257,12 +250,11 @@ fn create_device_infos(
 fn create_device_info(
     platform_id: usize,
     platform_name: String,
-    device_id: usize,
     device: Device,
 ) -> Result<DeviceInfo, ClgeomError> {
     let device_name = rewrap_ocl_result(device.name(), "getting device name")?;
     Ok(DeviceInfo {
-        device_id,
+        device,
         device_name,
         platform_id,
         platform_name,

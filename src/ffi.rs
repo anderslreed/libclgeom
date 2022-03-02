@@ -6,9 +6,10 @@ use std::mem::forget;
 use std::os::raw::c_char;
 use std::ptr::{null, write};
 
+use ocl::Device;
+
 use crate::context::{ContextManager, DeviceInfo};
 use crate::errors::ClgeomError;
-
 
 /// Wraps a `ContextManager` for use in C.
 #[repr(C)]
@@ -27,7 +28,7 @@ pub struct ClgeomContextManager {
 #[repr(C)]
 pub struct ClgeomDeviceInfo {
     /// The id of the device
-    device_id: usize,
+    device: *const c_void,
 
     /// The name of the device
     device_name: *const c_char,
@@ -46,9 +47,8 @@ pub struct ClgeomContext {
     context: *const c_void,
 }
 
-
 /// Box the provided object and cast the raw pointer to *mut Tout
-fn cast_boxed_raw<Tin, Tout>(item: Tin) -> *mut Tout {  
+fn cast_boxed_raw<Tin, Tout>(item: Tin) -> *mut Tout {
     Box::into_raw(Box::new(item)).cast::<Tout>()
 }
 
@@ -75,7 +75,7 @@ fn create_c_device_info(device_info: &DeviceInfo) -> Result<ClgeomDeviceInfo, Cl
         Err(e) => return Err(e),
     };
     Ok(ClgeomDeviceInfo {
-        device_id: device_info.device_id,
+        device: cast_boxed_raw(device_info.device.as_raw()),
         device_name,
         platform_id: device_info.platform_id,
         platform_name,
@@ -123,9 +123,7 @@ fn create_c_context_manager() -> Result<ClgeomContextManager, ClgeomError> {
 /// * `error_code`: Set to 0 if no errors are encountered, or a non-zero value to indicate an error.
 ///
 #[no_mangle]
-pub extern "C" fn clgeom_create_context_manager(
-    error_code: *mut u32,
-) -> ClgeomContextManager {
+pub extern "C" fn clgeom_create_context_manager(error_code: *mut u32) -> ClgeomContextManager {
     let mut code = 0;
     let result = create_c_context_manager().map_or_else(
         |_| {
@@ -153,10 +151,7 @@ pub extern "C" fn clgeom_create_context_manager(
 /// * `error_code`: Set to 0 if no errors are encountered, or a non-zero value to indicate an error.
 ///
 #[no_mangle]
-pub extern "C" fn clgeom_drop_context_manager(
-    mgr: ClgeomContextManager,
-    error_code: *mut u32,
-) {
+pub extern "C" fn clgeom_drop_context_manager(mgr: ClgeomContextManager, error_code: *mut u32) {
     // Have to explicitly drop deviceinfo
     let device_ptr = mgr.devices as *mut ClgeomDeviceInfo;
     // Safety: safe as long as device_ptr and n_devices have not been altered
@@ -188,7 +183,8 @@ pub extern "C" fn clgeom_create_context(
     // Safety: safe as long as mgr_ptr is valid
     let c_dev_info = unsafe { &*dev_ptr };
     let dev_info = DeviceInfo {
-        device_id: c_dev_info.device_id,
+        // Safety: requires valid c_dev_info.device
+        device: unsafe { *Box::from_raw(c_dev_info.device as *mut Device) },
         device_name: "".to_owned(),
         platform_id: c_dev_info.platform_id,
         platform_name: "".to_owned(),
@@ -219,7 +215,6 @@ pub extern "C" fn clgeom_drop_context(c_context: ClgeomContext, error_code: *mut
         write(error_code, 0);
     }
 }
-
 
 #[cfg(test)]
 mod tests {
