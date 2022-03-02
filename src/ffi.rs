@@ -24,18 +24,15 @@ pub struct ClgeomContextManager {
     n_devices: usize,
 }
 
-/// Wraps a `DeviceInfo` for use in C.
+/// Wraps an `ocl::Device` for use in C.
 #[repr(C)]
 pub struct ClgeomDeviceInfo {
-    /// The id of the device
+    /// The opencl device
     device: *const c_void,
 
     /// The name of the device
     device_name: *const c_char,
-
-    /// The id of the device's platform
-    platform_id: usize,
-
+    
     /// The name of the device's platform
     platform_name: *const c_char,
 }
@@ -77,7 +74,6 @@ fn create_c_device_info(device_info: &DeviceInfo) -> Result<ClgeomDeviceInfo, Cl
     Ok(ClgeomDeviceInfo {
         device: cast_boxed_raw(device_info.device.as_raw()),
         device_name,
-        platform_id: device_info.platform_id,
         platform_name,
     })
 }
@@ -88,10 +84,7 @@ fn create_c_context_manager() -> Result<ClgeomContextManager, ClgeomError> {
         Ok(mgr) => mgr,
         Err(e) => return Err(e),
     };
-    let device_infos = match manager.list_devices() {
-        Ok(devices) => devices,
-        Err(e) => return Err(e),
-    };
+    let device_infos = manager.list_devices();
     let c_devices_result: Result<Vec<_>, _> =
         device_infos.iter().map(create_c_device_info).collect();
     let c_devices = match c_devices_result {
@@ -152,7 +145,7 @@ pub extern "C" fn clgeom_create_context_manager(error_code: *mut u32) -> ClgeomC
 ///
 #[no_mangle]
 pub extern "C" fn clgeom_drop_context_manager(mgr: ClgeomContextManager, error_code: *mut u32) {
-    // Have to explicitly drop deviceinfo
+    // Have to explicitly drop DeviceInfo
     let device_ptr = mgr.devices as *mut ClgeomDeviceInfo;
     // Safety: safe as long as device_ptr and n_devices have not been altered
     unsafe { Vec::from_raw_parts(device_ptr, mgr.n_devices, mgr.n_devices) };
@@ -182,12 +175,14 @@ pub extern "C" fn clgeom_create_context(
     let mgr = unsafe { &(*(c_mgr.manager.cast::<ContextManager>())) };
     // Safety: safe as long as mgr_ptr is valid
     let c_dev_info = unsafe { &*dev_ptr };
-    let dev_info = DeviceInfo {
-        // Safety: requires valid c_dev_info.device
-        device: unsafe { *Box::from_raw(c_dev_info.device as *mut Device) },
-        device_name: "".to_owned(),
-        platform_id: c_dev_info.platform_id,
-        platform_name: "".to_owned(),
+    let dev_info = match DeviceInfo::from_device(unsafe {*Box::from_raw(c_dev_info.device as *mut Device)}) {
+        Ok(inf) => inf,
+        // Safety: safe as long as error_code is valid
+        Err(e) => {
+            unsafe { write(error_code, 500) }
+            println!("{}", e);
+            return ClgeomContext { context: null() };
+        }
     };
     let result = ClgeomContext {
         context: cast_boxed_raw(mgr.create_context(&dev_info)),
