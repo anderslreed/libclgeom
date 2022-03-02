@@ -35,6 +35,14 @@ pub struct ComputeContext {
 }
 
 impl ComputeContext {
+    /// Create an `ocl::Buffer` from an array
+    ///
+    /// # Arguments
+    ///
+    /// * `T` - the type of the input elements
+    /// * `data` - the values to initialize the buffer with
+    /// * `allow_write` - true to create a read/write buffer
+    ///
     pub fn create_buffer_from<T: OclPrm>(&self, data: &[T], allow_write: bool) -> BufferResult<T> {
         let flags = if allow_write {
             MemFlags::READ_WRITE
@@ -52,6 +60,13 @@ impl ComputeContext {
         )
     }
 
+    /// Create an empty `ocl::Buffer`
+    ///
+    /// # Arguments
+    ///
+    /// * `T` - the type of the elements the buffer is to hold
+    /// * `size` - the number of elements to allocate the buffer for
+    ///
     pub fn create_empty_buffer<T: OclPrm>(&self, size: usize) -> BufferResult<T> {
         rewrap_ocl_result(
             Buffer::builder()
@@ -63,13 +78,21 @@ impl ComputeContext {
         )
     }
 
+    /// Execute a named kernel
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - the name of the kernel to run
+    /// * `data` - the `ocl::Buffer` containing data to execute the kernel on
+    /// * `args` - additional arguments
+    /// 
     pub fn execute_kernel(
         &self,
         name: &str,
         data: &Buffer<Float4>,
         args: Vec<ParamType>,
-        size: usize,
-    ) -> Result<(), ClgeomError> {
+        ) -> Result<(), ClgeomError> {
+        let size = data.len();
         let devices = self.context.devices();
         let device = match devices.get(0) {
             Some(v) => v,
@@ -101,15 +124,27 @@ impl ComputeContext {
         unsafe { rewrap_ocl_result(kernel.enq(), &format!("running kernel: {}", name)) }
     }
 
-    pub fn read_buffer(&self, buffer: &Buffer<Float4>) -> Result<Vec<Float4>, ClgeomError>{
+    /// Return the data in the provided `ocl::Buffer`
+    /// 
+    /// # Arguments
+    /// 
+    /// * `buffer` - the buffer to read
+    ///
+    pub fn read_buffer(&self, buffer: &Buffer<Float4>) -> Result<Vec<Float4>, ClgeomError> {
         let mut result = vec![Float4::new(0.0, 0.0, 0.0, 0.0); buffer.len()];
-        rewrap_ocl_result(buffer.read(&mut result).queue(&self.queue).enq(), "reading result")?;
+        rewrap_ocl_result(
+            buffer.read(&mut result).queue(&self.queue).enq(),
+            "reading result",
+        )?;
         Ok(result)
     }
 }
 
+/// An arbitrary input parameter for a kernel 
 pub enum ParamType<'a> {
+    // An `ocl::Buffer`
     Buffer(&'a Buffer<Float4>),
+    // A single value
     Value(&'a Float4),
 }
 
@@ -275,16 +310,14 @@ mod tests {
         ];
 
         let buffer_a: Buffer<Float4> = cxt.create_buffer_from(data_a, true).unwrap();
-        cxt
-            .execute_kernel(
-                "translate",
-                &buffer_a,
-                vec![ParamType::Value(&data_b)],
-                data_a.len(),
-            )
-            .unwrap();
+        cxt.execute_kernel(
+            "translate",
+            &buffer_a,
+            vec![ParamType::Value(&data_b)],
+        )
+        .unwrap();
 
-        let result = cxt.read_buffer(buffer_a).unwrap();
+        let result = cxt.read_buffer(&buffer_a).unwrap();
 
         for i in 0..data_a.len() {
             for j in 0..3 {
